@@ -1,129 +1,108 @@
 # Security Testing & Penetration Assessment Notes
 
-> **Notice**: This document contains internal security assessment findings, vulnerability classification, and technical remediation specifications for the **Atelier North** interior styling web platform. This document is kept strictly separate from customer-facing application routes and documentation.
+> **Notice**: This document contains internal security assessment findings, vulnerability classifications, and technical verification specifications for the **Atelier North** testing platform. This document is kept strictly separate from customer-facing application routes.
 
 ---
 
-## 1. Vulnerability Overview
+## Vulnerability Matrix
 
-| Attribute | Specification |
-| :--- | :--- |
-| **Vulnerability Class** | Cross-Site Scripting (XSS) — Reflected / DOM-rendered via SSR & Hydration |
-| **CWE Identifier** | **CWE-79**: Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting') |
-| **CVSS v3.1 Score** | **6.1** (`CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N`) |
-| **Affected Endpoint** | `GET /search?q={user_input}` |
-| **Affected Source File** | `app/search/page.tsx` |
-| **Affected Parameter** | `q` (HTTP Query String Parameter) |
-| **Sink Mechanism** | `dangerouslySetInnerHTML={{ __html: highlightedQuery }}` |
-| **Severity** | Medium / High |
-
----
-
-## 2. Root Cause Analysis
-
-### Vulnerable Source Code
-Located in [app/search/page.tsx](file:///f:/SCET/SEM-7/Project%20I/Websit%201/app/search/page.tsx):
-
-```tsx
-// "Highlighting" the search query by wrapping in <strong> —
-// Developer mistake: builds an unescaped HTML string from untrusted user input
-const highlightedQuery = query
-  ? `Showing results for: <strong>${query}</strong>`
-  : `Showing all archive works and studio offerings`;
-
-return (
-  <p
-    id="search-summary-output"
-    className="search-summary text-sm text-[#6B6864]"
-    dangerouslySetInnerHTML={{ __html: highlightedQuery }}
-  />
-);
-```
-
-### Context & Developer Intent
-The engineering intent was to provide typographic emphasis (bold text) for the user's active search query when rendering the search results summary counter. Rather than using idiomatic React JSX nodes (e.g. `Showing results for: <strong>{query}</strong>`), the developer concatenated raw string fragments and passed the composite string into React's escape hatch: `dangerouslySetInnerHTML`.
-
-Because the `q` query string parameter undergoes no HTML entity encoding or HTML sanitization before being injected into the HTML string, arbitrary HTML elements and inline script handlers are rendered and executed in the client's browser context.
+| # | Vulnerability Class | CWE | Severity | Endpoint / Surface | Mechanism |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **1** | **Reflected / DOM XSS** | [CWE-79](https://cwe.mitre.org/data/definitions/79.html) | Medium (6.1) | `GET /search?q={payload}` | `dangerouslySetInnerHTML={{ __html: query }}` |
+| **2** | **Stored XSS** | [CWE-79](https://cwe.mitre.org/data/definitions/79.html) | High (7.2) | `GET /reviews` & `POST /api/reviews` | Unsanitized comment stored & rendered via `dangerouslySetInnerHTML` |
+| **3** | **Insecure Direct Object Reference (IDOR)** | [CWE-639](https://cwe.mitre.org/data/definitions/639.html) | High (7.5) | `GET /api/inquiries/[id]` | Direct sequential integer lookup without session/auth check |
+| **4** | **Sensitive Information Disclosure** | [CWE-200](https://cwe.mitre.org/data/definitions/200.html) | Medium (5.3) | `GET /api/debug` | Unauthenticated system diagnostics, Node version, memory & env |
+| **5** | **Broken Access Control (Inquiry Dump)** | [CWE-200](https://cwe.mitre.org/data/definitions/200.html) | High (7.5) | `GET /api/inquiries` | Unauthenticated full dump of confidential client project inquiries |
+| **6** | **Open Redirect** | [CWE-601](https://cwe.mitre.org/data/definitions/601.html) | Medium (6.1) | `GET /api/redirect?url={url}` | Blind 302 redirection without domain whitelist |
+| **7** | **Permissive CORS** | [CWE-942](https://cwe.mitre.org/data/definitions/942.html) | Low/Med (4.3) | `ALL /api/*` | Wildcard `Access-Control-Allow-Origin: *` |
 
 ---
 
-## 3. Exploit Proof of Concept (PoC)
+## 1. Reflected / DOM Cross-Site Scripting (XSS)
 
-### Reproduction Steps
-1. Start the web application:
-   ```bash
-   npm run build && npm run start
-   ```
-2. In any standard modern web browser, navigate to the following URL:
-   ```text
-   http://localhost:3000/search?q=%3Cimg+src%3Dx+onerror%3Dalert(document.domain)%3E
-   ```
-3. Observe that the browser parses the unescaped `<img>` tag inserted into the DOM. Because resource `x` fails to load, the `onerror` event handler triggers immediately, executing:
-   ```javascript
-   alert(document.domain)
-   ```
-
-### Alternative Functional Payloads
-- **SVG with inline onload**:
+- **Target**: `GET /search?q={query}`
+- **Source File**: `app/search/page.tsx`
+- **Root Cause**: The search query term is wrapped inside `<strong>` via string concatenation and rendered using `dangerouslySetInnerHTML`.
+- **Proof of Concept**:
   ```text
-  http://localhost:3000/search?q=%3Csvg%20onload=console.warn(document.cookie)%3E
+  http://localhost:3000/search?q=%3Cimg+src%3Dx+onerror%3Dalert(document.domain)%3E
   ```
-- **Input with autofocus / onfocus**:
+- **Remediation**: Render the search term as standard React JSX children (`<strong>{query}</strong>`).
+
+---
+
+## 2. Stored Cross-Site Scripting (Stored XSS)
+
+- **Target**: `GET /reviews` and `POST /api/reviews`
+- **Source File**: `app/reviews/page.tsx` and `app/api/reviews/route.ts`
+- **Root Cause**: The user-submitted testimonial comment is accepted via the API without HTML sanitization and subsequently rendered in the client testimonial stream using `dangerouslySetInnerHTML`.
+- **Proof of Concept**:
+  1. Navigate to `/reviews`.
+  2. In the "Share Your Experience" form, submit:
+     - Name: `Security Auditor`
+     - Review: `<b onmouseover="alert('Stored-XSS')">Hover over this review text</b><img src=x onerror="console.warn('Stored XSS triggered')">`
+  3. The payload is stored in the database/store and executes whenever any user visits `/reviews`.
+- **Remediation**: Sanitize input on submission or render review comments safely using standard React text nodes.
+
+---
+
+## 3. Insecure Direct Object Reference (IDOR)
+
+- **Target**: `GET /api/inquiries/[id]`
+- **Source File**: `app/api/inquiries/[id]/route.ts`
+- **Root Cause**: The route retrieves private consultation briefs using raw sequential integer IDs (`101`, `102`, `103`, etc.) with zero authorization or identity check.
+- **Proof of Concept**:
+  ```bash
+  curl http://localhost:3000/api/inquiries/101
+  curl http://localhost:3000/api/inquiries/102
+  curl http://localhost:3000/api/inquiries/103
+  ```
+- **Response**: Exposes client names, phone numbers, private emails, budgets, and property narratives.
+- **Remediation**: Implement session-based role checks and use cryptographically secure non-sequential identifiers (e.g., UUIDv4).
+
+---
+
+## 4. Sensitive Information Disclosure
+
+- **Target**: `GET /api/debug`
+- **Source File**: `app/api/debug/route.ts`
+- **Root Cause**: Exposes server runtime telemetry (Node version, process memory, uptime, platform architecture, and environment metadata) to unauthenticated callers.
+- **Proof of Concept**:
+  ```bash
+  curl http://localhost:3000/api/debug
+  ```
+- **Remediation**: Remove diagnostic routes from production builds or restrict them behind internal VPNs/API key authentication.
+
+---
+
+## 5. Unauthenticated Inquiries Dump
+
+- **Target**: `GET /api/inquiries`
+- **Source File**: `app/api/inquiries/route.ts`
+- **Root Cause**: Missing authentication middleware; allows any visitor or automated scraper to retrieve all confidential client inquiries in a single JSON response.
+- **Proof of Concept**:
+  ```bash
+  curl http://localhost:3000/api/inquiries
+  ```
+
+---
+
+## 6. Open Redirect
+
+- **Target**: `GET /api/redirect?url={url}`
+- **Source File**: `app/api/redirect/route.ts`
+- **Root Cause**: The redirect endpoint blindly reads the `url` query string parameter and issues an HTTP 302 redirect without validating the host or scheme.
+- **Proof of Concept**:
   ```text
-  http://localhost:3000/search?q=%3Cinput%20autofocus%20onfocus=alert(1)%3E
+  http://localhost:3000/api/redirect?url=https://attacker-controlled-site.com
   ```
+- **Remediation**: Enforce relative URL paths (e.g. must start with a single `/` and not `//`) or check against an approved domain whitelist.
 
 ---
 
-## 4. Impact Assessment
+## 7. Permissive Cross-Origin Resource Sharing (CORS)
 
-An attacker can construct a crafted hyperlink containing malicious JavaScript in the `q` parameter and distribute it via phishing, social engineering, or forum links:
-- **Session Hijacking / Credential Abuse**: If sensitive cookies (without `HttpOnly` flags) or browser `localStorage` tokens exist, malicious scripts can exfiltrate them.
-- **Defacement & Phishing**: An attacker could manipulate DOM content on `/search` to display forged authentication modals or redirect visitors to external credential harvesting sites.
-- **Client Actions**: The script can perform authenticated client actions (such as submitting forms or triggering API requests) on behalf of the victim.
-
----
-
-## 5. Remediation & Hardening Guidelines
-
-### Preferred Remediation (Idiomatic React Component Structure)
-Eliminate `dangerouslySetInnerHTML` entirely and rely on React's automatic JSX text escaping:
-
-```tsx
-// REMEDIATED CODE: app/search/page.tsx
-<p id="search-summary-output" className="search-summary text-sm text-[#6B6864]">
-  {query ? (
-    <>
-      Showing results for: <strong className="font-semibold text-[#1C1C1A]">{query}</strong>
-    </>
-  ) : (
-    "Showing all archive works and studio offerings"
-  )}
-</p>
-```
-
-### Alternative Remediation (Sanitization Library)
-If HTML rendering is genuinely required (e.g. for rich text highlighting across multiple matched substrings), sanitize the input using an established library like `DOMPurify` (or `sanitize-html` on Node/SSR):
-
-```tsx
-import DOMPurify from "isomorphic-dompurify";
-
-const cleanHtml = DOMPurify.sanitize(`Showing results for: <strong>${query}</strong>`);
-<p dangerouslySetInnerHTML={{ __html: cleanHtml }} />
-```
-
-### Defense-in-Depth (Content Security Policy)
-Configure a restrictive Content Security Policy (CSP) header in `next.config.ts`:
-```typescript
-const cspHeader = `
-  default-src 'self';
-  script-src 'self' 'nonce-...';
-  style-src 'self' 'unsafe-inline';
-  img-src 'self' blob: data: https://images.unsplash.com;
-  font-src 'self';
-  object-src 'none';
-  base-uri 'self';
-  form-action 'self';
-  frame-ancestors 'none';
-`;
-```
+- **Target**: All `/api/*` endpoints
+- **Source File**: `next.config.ts`
+- **Root Cause**: Wildcard header `Access-Control-Allow-Origin: *` configured across API routes.
+- **Remediation**: Specify explicit trusted origins or restrict cross-origin access entirely if APIs are internal.

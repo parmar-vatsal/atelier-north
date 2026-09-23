@@ -48,6 +48,11 @@ export default function Footer() {
                 </Link>
               </li>
               <li>
+                <Link href="/reviews" className="text-[#D4CEC5] hover:text-[#FAF8F5] transition-colors">
+                  Client Reviews
+                </Link>
+              </li>
+              <li>
                 <Link href="/about" className="text-[#D4CEC5] hover:text-[#FAF8F5] transition-colors">
                   Our Philosophy
                 </Link>

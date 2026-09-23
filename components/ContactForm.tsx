@@ -33,6 +33,8 @@ export default function ContactForm() {
     }
   };
 
+  const [submittedId, setSubmittedId] = useState<number | null>(null);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const result = validateContactForm(formData);
@@ -43,10 +45,23 @@ export default function ContactForm() {
     }
 
     setIsSubmitting(true);
-    // Simulate API processing
-    await new Promise((resolve) => setTimeout(resolve, 800));
-    setIsSubmitting(false);
-    setSubmitted(true);
+    try {
+      const res = await fetch("/api/inquiries", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(formData)
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSubmittedId(data.inquiryId);
+        setSubmitted(true);
+      }
+    } catch {
+      // Fallback
+      setSubmitted(true);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   if (submitted) {
@@ -58,6 +73,11 @@ export default function ContactForm() {
         <h3 className="font-serif text-3xl text-[#1C1C1A] mb-3">
           Dialogue Initiated
         </h3>
+        {submittedId && (
+          <div className="inline-block px-4 py-1.5 rounded-full bg-[#FAF8F5] border border-[#EAE4DC] text-xs font-mono text-[#B68D5D] mb-4 font-semibold">
+            Inquiry Reference #{submittedId}
+          </div>
+        )}
         <p className="text-[#6B6864] text-sm leading-relaxed max-w-md mx-auto mb-8">
           Thank you, <strong className="text-[#1C1C1A]">{formData.fullName}</strong>. We have received your project details regarding {formData.projectType}. An architectural principal will review your dossier and be in touch within 24 business hours.
         </p>
@@ -65,6 +85,7 @@ export default function ContactForm() {
           type="button"
           onClick={() => {
             setSubmitted(false);
+            setSubmittedId(null);
             setFormData({
               fullName: "",
               email: "",
