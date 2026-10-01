@@ -1,4 +1,4 @@
-# Atelier North — Interior Architecture & Spatial Curation
+# Atelier North — Interior Architecture & Spatial Curationn
 
 Atelier North is a modern web platform for a high-end interior architecture and spatial curation consultancy. The studio specializes in restrained, emotive environments grounded in organic materiality, daylight modulation, and artisanal joinery across private residences, culinary ateliers, and creative studios.
 
